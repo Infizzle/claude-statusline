@@ -15,6 +15,10 @@ five_hour_resets_at=$(echo "$input" | jq -r '.rate_limits.five_hour.resets_at //
 seven_day_pct=$(echo "$input" | jq -r '.rate_limits.seven_day.used_percentage // empty')
 seven_day_resets_at=$(echo "$input" | jq -r '.rate_limits.seven_day.resets_at // empty')
 
+# Extract reasoning effort level (low/medium/high/xhigh/max). Absent on models
+# that don't support extended thinking.
+effort_level=$(echo "$input" | jq -r '.effort.level // empty')
+
 # Determine plan tier from context window size: 200K = standard/Pro, 100K = legacy
 # Claude Max 5x and 20x both use the same context window, so we label based on what's observable.
 # If rate_limits are present, it means the user is on a Claude.ai subscription (Max plan).
@@ -58,10 +62,16 @@ else
     mins_until=$((min_until_reset % 60))
 fi
 
-# Get git branch (skip locks for performance)
+# Get git branch (skip locks for performance) and dirty state
 git_branch=""
+git_dirty=""
 if [ -d "$cwd/.git" ]; then
     git_branch=$(cd "$cwd" && git -c core.filemode=false branch --show-current 2>/dev/null || echo "")
+    # `status --porcelain` prints one line per modified/untracked path; any
+    # output means the working tree is dirty.
+    if [ -n "$(cd "$cwd" && git -c core.filemode=false status --porcelain 2>/dev/null)" ]; then
+        git_dirty="●"
+    fi
 fi
 
 # Determine color based on context usage: green < 50%, yellow 50-80%, red > 80%
@@ -105,9 +115,18 @@ sep="\033[90m | \033[0m"
 # Build status line with pipe separators
 output=""
 
-# 1. Model name + plan label (bright white for readability on dark backgrounds)
-if [ -n "$plan_label" ]; then
-    output+=$(printf "\033[97m%s\033[0m \033[90m(%s)\033[0m" "$model" "$plan_label")
+# 1. Model name + plan label + effort level (bright white for readability on dark backgrounds)
+# Combine plan label and effort into one parenthetical: "(Max · high)" / "(Max)" / "(high)"
+label_inner=""
+if [ -n "$plan_label" ] && [ -n "$effort_level" ]; then
+    label_inner="$plan_label · $effort_level"
+elif [ -n "$plan_label" ]; then
+    label_inner="$plan_label"
+elif [ -n "$effort_level" ]; then
+    label_inner="$effort_level"
+fi
+if [ -n "$label_inner" ]; then
+    output+=$(printf "\033[97m%s\033[0m \033[90m(%s)\033[0m" "$model" "$label_inner")
 else
     output+=$(printf "\033[97m%s\033[0m" "$model")
 fi
@@ -150,9 +169,14 @@ output+=$(printf " %s%%\033[0m" "$used_pct_fmt")
 # 5. Tokens (white)
 output+=$(printf "${sep}\033[37m%s/%s\033[0m" "$tokens_fmt" "$context_fmt")
 
-# 6. Git branch (green, only if available)
+# 6. Git branch (green, only if available). A yellow ● after the name marks a
+# dirty working tree (uncommitted changes or untracked files).
 if [ -n "$git_branch" ]; then
-    output+=$(printf "${sep}\033[32m%s\033[0m" "$git_branch")
+    if [ -n "$git_dirty" ]; then
+        output+=$(printf "${sep}\033[32m%s\033[0m \033[33m%s\033[0m" "$git_branch" "$git_dirty")
+    else
+        output+=$(printf "${sep}\033[32m%s\033[0m" "$git_branch")
+    fi
 fi
 
 # 7. Project name (bright cyan)
