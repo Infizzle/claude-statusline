@@ -48,13 +48,14 @@ Add to your `~/.claude/settings.json`:
 
 ```json
 {
-  "statusline": {
+  "statusLine": {
+    "type": "command",
     "command": "bash ~/.claude/statusline-command.sh"
   }
 }
 ```
 
-Or if you already have a `settings.json`, add the `statusline` key to it.
+Or if you already have a `settings.json`, add the `statusLine` key to it.
 
 ### 3. Dependencies
 
